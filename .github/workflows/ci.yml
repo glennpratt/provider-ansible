@@ -5,8 +5,21 @@ on:
     branches:
       - main
       - release-*
+    tags:
+      - 'v*'
   pull_request: {}
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      xpkg_reg_orgs:
+        description: >-
+          Publish the package to these registry orgs, space separated (e.g. ghcr.io/my-org).
+          Defaults to the XPKG_REG_ORGS repository variable; forks publish only when one is set.
+        required: false
+        default: ''
+      version:
+        description: 'Version to build and publish (default: the tag being built, or derived from git describe)'
+        required: false
+        default: ''
 
 env:
   # Common versions
@@ -238,8 +251,44 @@ jobs:
     runs-on: ubuntu-22.04
     needs: detect-noop
     if: needs.detect-noop.outputs.noop != 'true'
+    permissions:
+      contents: read
+      packages: write
 
     steps:
+      # Publishing to the registries given by the xpkg_reg_orgs input or the
+      # XPKG_REG_ORGS repository variable, e.g. a fork's ghcr.io/<org>. Only
+      # for manual runs and tag pushes; a tag publishes as its own version.
+      - name: Configure Publishing to Given Registries
+        id: given
+        env:
+          INPUT_XPKG_REG_ORGS: ${{ inputs.xpkg_reg_orgs || vars.XPKG_REG_ORGS }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          orgs="" version="$INPUT_VERSION"
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch || "$GITHUB_REF" == refs/tags/* ]]; then
+            orgs="$INPUT_XPKG_REG_ORGS"
+          fi
+          if [[ -n "$orgs" && -z "$version" && "$GITHUB_REF" == refs/tags/* ]]; then
+            version="$GITHUB_REF_NAME"
+          fi
+          if [[ -n "$orgs" ]]; then
+            if [[ ! "$orgs" =~ ^[a-z0-9][a-z0-9./:_-]*( [a-z0-9][a-z0-9./:_-]*)*$ ]]; then
+              echo "::error::registry orgs must be space separated, like ghcr.io/my-org, got '$orgs'"
+              exit 1
+            fi
+            echo "XPKG_REG_ORGS=$orgs" >> "$GITHUB_ENV"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+          if [[ -n "$version" ]]; then
+            if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.+-][A-Za-z0-9.+-]*)?$ ]]; then
+              echo "::error::version must look like v1.2.3 or v1.2.3-suffix, got '$version'"
+              exit 1
+            fi
+            echo "VERSION=$version" >> "$GITHUB_ENV"
+          fi
+
       - name: Setup QEMU
         uses: docker/setup-qemu-action@v3
         with:
@@ -315,14 +364,26 @@ jobs:
 
       - name: Publish Artifacts to S3 and Docker Hub
         run: make -j2 publish BRANCH_NAME=${GITHUB_REF##*/}
-        if: env.CONTRIB_DOCKER_USR != ''
+        if: env.CONTRIB_DOCKER_USR != '' && steps.given.outputs.publish != 'true'
         env:
           GIT_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DOCS_GIT_USR: ${{ secrets.UPBOUND_BOT_GITHUB_USR }}
           DOCS_GIT_PSW: ${{ secrets.UPBOUND_BOT_GITHUB_PSW }}
 
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        if: steps.given.outputs.publish == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish Package to Given Registries
+        if: steps.given.outputs.publish == 'true'
+        run: make version.isdirty xpkg.release.publish
+
       - name: Promote Artifacts in S3 and Docker Hub
-        if: github.ref == 'refs/heads/main' && env.CONTRIB_DOCKER_USR != ''
+        if: github.ref == 'refs/heads/main' && env.CONTRIB_DOCKER_USR != '' && steps.given.outputs.publish != 'true'
         run: make -j2 promote
         env:
           BRANCH_NAME: main
