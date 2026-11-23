@@ -1,12 +1,13 @@
-FROM python:3.10-alpine3.17 AS build-base
+FROM python:3.10.13-alpine3.17@sha256:0d288bffed7192d42175235891105f5ac6171d503aea5270c10529fcd31518e5 AS build-base
 RUN apk --no-cache add gcc musl-dev libffi-dev
-RUN mkdir -p /wheels
-RUN python -m pip wheel ansible ansible-runner distlib --wheel-dir=/wheels
+COPY requirements.txt /requirements.txt
+RUN python -m pip wheel --require-hashes --no-deps -r /requirements.txt --wheel-dir=/wheels
 
-FROM python:3.10-alpine3.17
+FROM python:3.10.13-alpine3.17@sha256:0d288bffed7192d42175235891105f5ac6171d503aea5270c10529fcd31518e5
 RUN apk --no-cache add ca-certificates bash openssh-client git dumb-init
 COPY --from=build-base /wheels/* /wheels/
-RUN python -m pip install --no-index --find-links=/wheels ansible ansible-runner distlib && \
+# Install exactly the wheels built from requirements.txt.
+RUN python -m pip install --no-index --no-deps /wheels/*.whl && \
     rm -r /wheels
 
 ARG TARGETOS
