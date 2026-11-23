@@ -1,0 +1,7 @@
+# Direct dependencies of the provider image. requirements.txt pins these and
+# everything they depend on, with hashes; regenerate it after changing this
+# file with ./update-requirements.sh (upgrade a single package with
+# ./update-requirements.sh --upgrade-package <name>).
+ansible==15.0.0
+ansible-runner==2.4.3
+distlib==0.4.4
