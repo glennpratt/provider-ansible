@@ -28,6 +28,11 @@ RUNNING_IN_CI = true
 # ====================================================================================
 # Setup Kubernetes tools
 
+# NOTE: the build module's default up (v0.19.2) can't build packages from images
+# in Docker's classic image store, as on GitHub's runners ("unable to calculate
+# manifest: blob ... not found"). Use the version upstream main uses.
+UP_VERSION = v0.44.3
+
 -include build/makelib/k8s_tools.mk
 
 # ====================================================================================
